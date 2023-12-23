@@ -135,9 +135,13 @@ pub struct UserDeposit {
 
 #[account]
 pub struct Player {
+    pub balance: u64,
+    pub wager: u64,
     pub wins: u64,
     pub losses: u64,
-    // Additional fields can be added as needed
+    pub total_bet: u64,
+    pub total_won: u64,
+    pub total_lost: u64,
 }
 
 #[error_code]
