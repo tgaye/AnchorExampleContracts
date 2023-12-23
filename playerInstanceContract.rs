@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::system_instruction;
-use std::mem::size_of;
 
 declare_id!("47dheiy7CSRJF1mGP1DSiJsx83Bd1gtTLvs9SUNNvomt");
 
@@ -28,53 +27,57 @@ pub mod deposit_contract {
                 ctx.accounts.deposit_account.to_account_info(),
             ],
         )?;
-    
+
         let deposit_account = &mut ctx.accounts.deposit_account;
         deposit_account.total_deposits += amount;
-    
+
         let user_key = ctx.accounts.user.key();
         match deposit_account.user_deposits.iter_mut().find(|deposit| deposit.user == user_key) {
-            Some(deposit) => deposit.amount += amount,
-            None => deposit_account.user_deposits.push(UserDeposit {
-                user: user_key,
-                amount,
-            }),
+            Some(deposit) => {
+                deposit.amount += amount;
+            },
+            None => {
+                deposit_account.user_deposits.push(UserDeposit {
+                    user: user_key,
+                    amount,
+                });
+            },
         }
-    
-        // Initialize or update the player account
-        let player = &mut ctx.accounts.player;
-            // Inside your deposit function
-            if player.balance == 0 {
-                // No need to manually set the key or lamports; Anchor handles initialization
-                player.balance = amount;
-            } else {
-                // Update player's balance
-                player.balance += amount;
-            }
-    
+
         Ok(())
     }
 
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
-        let deposit_account = &mut ctx.accounts.deposit_account;
         let user_key = ctx.accounts.user.key();
-        
-        if let Some(deposit) = deposit_account.user_deposits.iter_mut().find(|deposit| deposit.user == user_key) {
-            
-            if deposit.amount < amount {
-                return Err(ErrorCode::InsufficientFunds.into());
+        let mut deposit_found = false;
+    
+        // Check if the user has a deposit large enough to withdraw the requested amount
+        for deposit in ctx.accounts.deposit_account.user_deposits.iter_mut() {
+            if deposit.user == user_key {
+                require!(deposit.amount >= amount, ErrorCode::InsufficientFunds);
+                deposit_found = true;
+    
+                deposit.amount -= amount;
+                ctx.accounts.deposit_account.total_deposits -= amount;
+                break;
             }
-
-            deposit.amount -= amount;
-            deposit_account.total_deposits -= amount;
-
-            **ctx.accounts.user.to_account_info().lamports.borrow_mut() += amount;
-        } else {
+        }
+    
+        if !deposit_found {
             return Err(ErrorCode::InsufficientFunds.into());
         }
-
+    
+        // Check if the deposit_account has enough lamports to cover the withdrawal
+        let deposit_account_lamports = **ctx.accounts.deposit_account.to_account_info().lamports.borrow();
+        require!(deposit_account_lamports >= amount, ErrorCode::InsufficientFunds);
+    
+        // Perform the lamport transfer
+        **ctx.accounts.user.to_account_info().lamports.borrow_mut() += amount;
+        **ctx.accounts.deposit_account.to_account_info().lamports.borrow_mut() -= amount;
+    
         Ok(())
     }
+    
 
     pub fn get_total_deposits(ctx: Context<GetTotalDeposits>) -> Result<()> {
         let deposit_account = &ctx.accounts.deposit_account;
@@ -85,7 +88,7 @@ pub mod deposit_contract {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(init, payer = user, space = 8 + 40 + 500)] // Adjusted space for vector
+    #[account(init, payer = user, space = 8 + 40 + 500)] 
     pub deposit_account: Account<'info, DepositAccount>,
     #[account(mut)]
     pub user: Signer<'info>,
@@ -99,8 +102,8 @@ pub struct Deposit<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
     pub system_program: Program<'info, System>,
-    #[account(init, payer = user, space = 8 + size_of::<Player>(), seeds = [user.key().as_ref()], bump)]
-    pub player: Account<'info, Player>,
+    #[account(init, payer = user, space = 8 + 64)]
+    pub player: Account<'info, Player>, // This account tracks the wins and losses
 }
 
 #[derive(Accounts)]
@@ -109,6 +112,8 @@ pub struct Withdraw<'info> {
     pub deposit_account: Account<'info, DepositAccount>,
     #[account(mut)]
     pub user: Signer<'info>,
+    #[account(mut)]
+    pub player: Account<'info, Player>, // Reference to update the Player account
 }
 
 #[derive(Accounts)]
@@ -122,7 +127,7 @@ pub struct DepositAccount {
     pub user_deposits: Vec<UserDeposit>,
 }
 
-#[account]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct UserDeposit {
     pub user: Pubkey,
     pub amount: u64,
@@ -130,27 +135,15 @@ pub struct UserDeposit {
 
 #[account]
 pub struct Player {
-    pub balance: u64,
-    pub wager: u64,
     pub wins: u64,
     pub losses: u64,
-    pub total_bet: u64,
-    pub total_won: u64,
-    pub total_lost: u64,
-    pub bump: u8, 
+    // Additional fields can be added as needed
 }
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Invalid amount")]
+    #[msg("The deposited amount is not the correct value.")]
     InvalidAmount,
-
-    #[msg("Insufficient funds")]
+    #[msg("Insufficient funds for withdrawal.")]
     InsufficientFunds,
-
-    #[msg("Player account mismatch")]
-    PlayerAccountMismatch,
-
-    #[msg("Bump mismatch")]
-    BumpMismatch,
 }
