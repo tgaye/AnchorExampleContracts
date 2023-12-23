@@ -5,3 +5,4 @@ In order of complexity:
 1. DepositContract
 2. WithdrawContract
 3. PlayerInstanceContract
+4. CreateGameLobby
